@@ -82,7 +82,45 @@ def last_business_day(start_date, country='NA'):
     return date_inc
 
 
-def get_last_price(symbol, instrument, currency):
+def subdomain_last_price(symbol):
+     subdoma = "/quote/{0}"
+     subdomain = subdoma.format(symbol)
+     return subdomain
+
+
+def scrape_last_price(url, header):
+     page = get(url, headers=header)
+     element_html = html.fromstring(page.content)
+     elements = element_html.xpath('//*[@id="quote-header-info"]/div[3]/div[1]/div/span[1]')
+     return elements
+
+
+def get_last_price_new(symbol):
+    '''
+    Purpose
+    -------
+    get latest price of a security from the marketwatch website
+
+    Parameters
+    ----------
+    symbol: str
+        security name as displayed in yahoo finance, e.g. ZSP.TO, DLR-U.TO
+
+    Returns
+    -------
+    datetime object and a floating point value representing price
+
+    '''
+    base_url = 'https://finance.yahoo.com'
+    url = base_url + subdomain_last_price(symbol)
+    url_header = header_function(subdomain_last_price(symbol))
+    elements = scrape_last_price(url, url_header)
+    price = elements[0].text_content()
+    last_price = float(price)
+    return datetime.now(), last_price
+
+
+def get_last_price_old(symbol, instrument, currency):
     '''
     Purpose
     -------
@@ -384,6 +422,6 @@ def past_dates_dict(current_date, inception_date):
 #% test
 if __name__ == '__main__':
 
-    sym = 'usdcad'
+    sym = 'DLR-U.TO'
 
-    print(get_last_fx(sym))
+    print(get_last_price_new(sym))
