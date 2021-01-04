@@ -139,8 +139,6 @@ def questrade_transaction_to_sec(transaction_df):
                     holdings_dict[i_currency.upper()] += i_net_amount
             elif i_action == 'TFO': # trasnfer out
                 if (i_symbol != '') and (not pd.isna(i_symbol)): # transferring securities
-                    if (i_currency == 'CAD') and ('.TO' not in i_symbol):
-                        i_symbol = i_symbol + '.TO'
                     if i_symbol not in security_dict.keys():
                         print('transferring out non-existent security')
                         return
@@ -179,9 +177,16 @@ def questrade_transaction_to_sec(transaction_df):
             if i_action == 'CIL': # cash in lieu
                 holdings_dict[i_currency.upper()] += i_net_amount
             elif i_action == 'REV': # reverse split
-                pass
+                i_security = security_dict[i_symbol]
+                if i_quantity < 0:
+                    i_security.new_trade(i_quantity, i_price, abs(i_commission), liquidate_if_zero=False)
+                else:
+                    i_price = useful_functions.get_hist_price(i_symbol, i_transaction_date)
+                    i_security.new_trade(i_quantity, i_price, abs(i_commission))
+                security_dict[i_symbol] = i_security
             elif i_action == 'NAC': # name change
-                pass
+                i_security = security_dict[i_symbol]
+                i_security.new_trade(i_quantity, i_price, abs(i_commission), liquidate_if_zero=False)
 
 
         # any activities not encountered before
@@ -230,11 +235,52 @@ class TransactionHistory():
         self.broker = broker_
 
 
+    def update_inkind_transfer(self, reference_df):
+        inkind_transfers = self.df[(self.df['Activity Type'] == 'Transfers') & (~ pd.isna(self.df['Symbol']))]
+        print('{} rows of in-kind transfers detectted'.format(len(inkind_transfers)))
+        if len(inkind_transfers) > 0:
+            for i in inkind_transfers.index:
+                i_currency = self.df.loc[i, 'Currency']
+                if i_currency == 'CAD':
+                    self.df.loc[i, 'Symbol'] = self.df.loc[i, 'Symbol'] + '.TO'
+                elif i_currency == 'USD':
+                    self.df.loc[i, 'Symbol'] = vlookup(reference_df, self.df.loc[i, 'Symbol'], 'transfer_symbol', 'real_symbol')
+
+
+    def update_splits(self, reference_df):
+        splits = self.df[self.df['Action'] == 'REV']
+        print('{} rows of reverse splits/splits detected'.format(len(splits)))
+        if len(splits) > 0:
+            for i in splits.index:
+                i_symbol = vlookup(reference_df, self.df.loc[i, 'Symbol'], 'transfer_symbol', 'real_symbol')
+                if i_symbol is None:
+                    print('{} not found in reference table'.format(self.df.loc[i, 'Symbol']))
+                self.df.loc[i, 'Symbol'] = i_symbol
+
+
+    def update_name_changes(self, reference_df):
+        name_changes = self.df[self.df['Action'] == 'NAC']
+        print('{} rows of name changes detected'.format(len(name_changes)))
+        if len(name_changes) > 0:
+            for i in name_changes.index:
+                i_symbol = vlookup(reference_df, self.df.loc[i, 'Symbol'], 'transfer_symbol', 'real_symbol')
+                if i_symbol is None:
+                    print('{} not found in reference table'.format(self.df.loc[i, 'Symbol']))
+                self.df.loc[i, 'Symbol'] = i_symbol
+
+
+    def update_corporate_actions(self, reference_df):
+        self.update_splits(reference_df)
+        self.update_name_changes(reference_df)
+
+
     def print_info(self):
         print('first transaction: {}'.format(self.first_transaction_date.strftime('%Y-%m-%d')))
         print('last transaction: {}'.format(self.last_transaction_date.strftime('%Y-%m-%d')))
         print('asof: {}'.format(self.current_datetime.strftime('%Y-%m-%d')))
         print('broker: ' + self.broker)
+
+
 
 
 class Portfolio():
@@ -278,8 +324,6 @@ class Portfolio():
                 if len(inkind_rows) > 0:
                     for i in inkind_rows:
                         lookup_symbol = cash_flows_df.loc[i, 'Symbol']
-                        if cash_flows_df.loc[i, 'Currency'] == 'CAD':
-                            lookup_symbol = lookup_symbol + '.TO'
                         i_price = useful_functions.get_hist_price(lookup_symbol, cash_flows_df.loc[i, 'Transaction Date'])
                         cash_flows_df.loc[i, 'Net Amount'] = i_price * cash_flows_df.loc[i, 'Quantity']
 
@@ -559,13 +603,13 @@ class Security():
         self.region = region_
 
 
-    def new_trade(self, new_quantity, new_price, new_commission):
+    def new_trade(self, new_quantity, new_price, new_commission, liquidate_if_zero=True):
         new_num_shares = self.quantity + new_quantity
         self.commission += new_commission
         if new_quantity > 0: # buy
             new_average_cost = (self.quantity * self.average_cost + new_quantity * new_price + new_commission) / new_num_shares
             self.average_cost = new_average_cost
-        if new_num_shares == 0:
+        if (new_num_shares == 0) and (liquidate_if_zero):
             self.liquidated = True
         self.quantity = new_num_shares
 
@@ -579,10 +623,11 @@ class Security():
     def update_market_price(self, info_table, symbol_col, date=None):
         url_symbol = vlookup(info_table, self.symbol, symbol_col, 'ticker_url')
         if date is not None:
+            print('getting historical data for {} on {}'.format(self.symbol, date.strftime('%Y-%m-%d')))
             self.market_price = useful_functions.get_hist_price(self.symbol, date)
             self.market_price_time = date
         else:
-            price_pair = get_last_price(url_symbol, self.instrument, self.currency)
+            price_pair = get_last_price(url_symbol)
             self.market_price = price_pair[1]
             self.market_price_time = price_pair[0]
 
@@ -634,7 +679,7 @@ class Option(Security):
             self.underlying_market_price = useful_functions.get_hist_price(self.underlying_symbol, date)
             self.underlying_market_price_time = date
         else:
-            price_pair = get_last_price(url_symbol, lookup_instrument, self.currency)
+            price_pair = get_last_price(url_symbol)
             self.underlying_market_price = price_pair[1]
             self.underlying_market_price_time = price_pair[0]
         # the market price of the option is intrinsic value only due to difficulties of getting market value of options
