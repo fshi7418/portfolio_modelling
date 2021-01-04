@@ -23,15 +23,19 @@ sheetname_dict = config['info_sheetnames']
 info_file = pd.read_excel(os.path.join(home_dir, filename_dict['info_table']), sheet_name=None)
 info_table = info_file[sheetname_dict['general_info']]
 symbol_lookup_table = info_file[sheetname_dict['transfer_symbol_lookup']]
+
 tfsa_transaction_hist = pd.read_excel(os.path.join(os.getcwd(), paths_dict['transaction_hist_folder'], filename_dict['tfsa_transactions']))
 rrsp_transaction_hist = pd.read_excel(os.path.join(os.getcwd(), paths_dict['transaction_hist_folder'], filename_dict['rrsp_transactions']))
+q_margin_transaction_hist = pd.read_excel(os.path.join(os.getcwd(), paths_dict['transaction_hist_folder'], filename_dict['q_margin_transactions']))
 
 tfsa_output_filename = os.path.join(os.getcwd(), filename_dict['tfsa_output'])
 rrsp_output_filename = os.path.join(os.getcwd(), filename_dict['rrsp_output'])
+q_margin_output_filename = os.path.join(os.getcwd(), filename_dict['q_margin_output'])
 
 #%% main
 # questrade tfsa
 tfsa_transactions = TransactionHistory(tfsa_transaction_hist, 'questrade')
+tfsa_transactions.update_inkind_transfer(symbol_lookup_table)
 tfsa_portfolio = Portfolio(transaction=tfsa_transactions, info_df=info_table)
 
 #% performance measurement
@@ -42,10 +46,19 @@ tfsa_portfolio.output_file(tfsa_output_filename)
 
 #% questrade rrsp
 rrsp_transactions = TransactionHistory(rrsp_transaction_hist, 'questrade')
+rrsp_transactions.update_inkind_transfer(symbol_lookup_table)
 rrsp_portfolio = Portfolio(transaction=rrsp_transactions, info_df=info_table)
 
 #% performance measurement
 rrsp_portfolio.get_hist_holdings(rrsp_transactions, info_table)
 rrsp_portfolio.measure_performance()
 rrsp_portfolio.output_file(rrsp_output_filename)
+
+
+#%% questrade margin
+q_margin_transactions = TransactionHistory(q_margin_transaction_hist, 'questrade')
+q_margin_transactions.update_inkind_transfer(symbol_lookup_table)
+q_margin_transactions.update_corporate_actions(symbol_lookup_table)
+q_margin_transactions.update_journalling()
+
 
