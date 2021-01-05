@@ -208,7 +208,58 @@ def scrape_page(url, header):
      return panda
 
 
-def get_hist_price(symbol, date):
+def split_multiplier(symbol, date):
+    '''
+    Purpose
+    -------
+    get the mutliplier that gives the closing price of a security from yahoo finance,
+    NOT adjusted for splits
+
+    Parameters
+    ----------
+    symbol: str
+        security name, e.g. ZSP.TO
+
+    date: python datetime
+        the date of the price. price is obtained at close
+
+    Returns
+    -------
+    a multiplier that, if applied to the split-adjusted price, will give the unadjusted price on
+    the given date
+
+    '''
+
+    # get the splits
+
+    range_end = datetime(datetime.now().year, datetime.now().month, datetime.now().day)
+
+    start_string = format_date(date)
+    end_string = format_date(range_end)
+
+    sub = subdomain(symbol, start_string, end_string, filter='split')
+    html_header = header_function(sub)
+
+    base_url = 'https://finance.yahoo.com'
+    url = base_url + sub
+
+    split_history = scrape_page(url, html_header)[0]
+
+    # print(split_history)
+
+    multiplier = 1
+
+    for i in split_history.index:
+        i_str = split_history.loc[i, 'Open']
+        if ':' in i_str:
+            ratio_str = i_str.split(' ')[0]
+            i_multiplier = int(ratio_str.split(':')[0]) / int(ratio_str.split(':')[1])
+            multiplier = multiplier * i_multiplier
+
+    return multiplier
+
+
+def get_hist_price(symbol, date, split_adjust=False):
     '''
     Purpose
     -------
@@ -221,6 +272,10 @@ def get_hist_price(symbol, date):
 
     date: python datetime
         the date of the price. price is obtained at close
+
+    split_adjust : bool, optional
+        whether to return split-adjusted closing price, default false for
+        historical portfolio valuations purposes
 
     Returns
     -------
@@ -260,7 +315,13 @@ def get_hist_price(symbol, date):
         # if there are still multiple records for the same day, just get the first row
         price_str = price_str.reset_index(drop=True).loc[0, ]
 
-    return float(price_str)
+    split_adjusted_close = float(price_str)
+
+    if not split_adjust:
+        unadjusted_multiplier = split_multiplier(symbol, date)
+        return split_adjusted_close * unadjusted_multiplier
+
+    return split_adjusted_close
 
 
 def get_hist_fx(pair, date):
@@ -423,6 +484,12 @@ def past_dates_dict(current_date, inception_date):
 #% test
 if __name__ == '__main__':
 
-    sym = ['USDCAD']
+    sym = 'USO'
 
-    print(get_fx(sym, datetime(2020, 12, 22)))
+    d = datetime(2020, 5, 30)
+
+    print(get_hist_price(sym, d))
+
+    m = split_multiplier(sym, d)
+
+    print(m)
