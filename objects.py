@@ -201,7 +201,12 @@ def questrade_transaction_to_sec(transaction_df, split_reference=None):
                     symbol_to = journal_symbol_dest(i_symbol, i_currency) # need to define
                     i_security.journal(symbol_to, i_transaction_date)
                     del security_dict[i_symbol]
-                    security_dict[symbol_to] = i_security
+                    if symbol_to not in security_dict.keys():
+                        security_dict[symbol_to] = i_security
+                    else:
+                        existing_security = security_dict[symbol_to]
+                        existing_security.new_trade(i_security.quantity, i_security.average_cost, i_security.commission)
+                        security_dict[symbol_to] = existing_security
             elif i_action == 'ADJ': # option adjustment because of splits
                 if i_quantity < 0:
                     # first find the new underlying symbol
@@ -234,17 +239,18 @@ def questrade_transaction_to_sec(transaction_df, split_reference=None):
             if i_action == 'CIL': # cash in lieu
                 holdings_dict[i_currency.upper()] += i_net_amount
             elif i_action == 'REV': # reverse split
-                i_security = security_dict[i_symbol]
                 if i_quantity < 0:
-                    i_security.new_trade(i_quantity, i_price, abs(i_commission), liquidate_if_zero=False)
-                else:
-                    i_price = useful_functions.get_hist_price(i_symbol, i_transaction_date)
-                    i_security.new_trade(i_quantity, i_price, abs(i_commission))
-                security_dict[i_symbol] = i_security
+                    i_security = security_dict[i_symbol]
+                    counter_split = transaction_df[(transaction_df['Action'] == 'REV') &
+                                                   (transaction_df['Transaction Date'] == i_transaction_date) &
+                                                   (transaction_df['Quantity'] > 0)]
+                    new_quantity = int(counter_split['Quantity'])
+                    lookup_date = datetime(i_transaction_date.year, i_transaction_date.month, i_transaction_date.day)
+                    ratio = 1 / vlookup(split_reference, lookup_date, 'date', 'multiplier')
+                    i_security.reverse_split(ratio, new_quantity)
+                    security_dict[i_symbol] = i_security
             elif i_action == 'NAC': # name change
-                i_security = security_dict[i_symbol]
-                i_security.new_trade(i_quantity, i_price, abs(i_commission), liquidate_if_zero=False)
-
+                pass
 
         # any activities not encountered before
         else:
@@ -353,6 +359,15 @@ class TransactionHistory():
                 else:
                     if i_currency == 'CAD':
                         self.df.loc[i, 'Symbol'] = i_symbol + '.TO'
+
+
+    def update_misc_symbols(self, reference_df):
+        misc_reference = reference_df[reference_df['misc'] == 1]
+        if len(misc_reference) > 0:
+            for i in misc_reference.index:
+                misc_transfer = misc_reference.loc[i, 'transfer_symbol']
+                real_symbol = misc_reference.loc[i, 'real_symbol']
+                self.df.loc[self.df['Symbol'] == misc_transfer, 'Symbol'] = real_symbol
 
 
     def print_info(self):
@@ -712,6 +727,12 @@ class Security():
             price_pair = get_last_price(url_symbol)
             self.market_price = price_pair[1]
             self.market_price_time = price_pair[0]
+
+
+    def reverse_split(self, ratio, new_share_num):
+        # ratio should be the number of shares that are merged into one share
+        self.quantity = new_share_num
+        self.average_cost = self.average_cost * ratio
 
 
     def journal(self, symbol_to, date):
