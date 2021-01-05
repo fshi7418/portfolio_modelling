@@ -42,12 +42,47 @@ def description_to_option(description, currency):
     return Option(option_symbol, currency, option_type, spot_symbol, expiration, strike)
 
 
-def questrade_transaction_to_sec(transaction_df):
+def journal_symbol_dest(symbol, old_currency):
+    '''
+    Purpose
+    -------
+    get the destination symbol of a journalled security based on old currency
+
+    Parameters
+    ----------
+    symbol : str
+        the old symbol, e.g. 'DLR.TO', 'DLR-U.TO'
+
+    old_currency:
+        the currency of the security before journalling, e.g. 'CAD'
+
+    Returns
+    -------
+    str
+    '''
+    symbol = symbol.replace('.TO', '')
+    special_list = ['DLR', 'ZSP', 'DLR-U', 'ZSP-U']
+    if symbol in special_list:
+        if old_currency == 'CAD':
+            return '{}-U.TO'.format(symbol)
+        else:
+            return '{}.TO'.format(symbol.replace('-U', ''))
+    else:
+        if old_currency == 'CAD':
+            return symbol
+        else:
+            return symbol + '.TO'
+
+
+def questrade_transaction_to_sec(transaction_df, split_reference=None):
     '''
     Parameters
     ----------
     transaction_df : DataFrame
         the dataframe exported by questrade
+
+    split_reference : DataFrame, optional
+        a reference dataframe for stock splits, default None
 
     Returns
     -------
@@ -161,9 +196,31 @@ def questrade_transaction_to_sec(transaction_df):
             elif i_action == 'GST': # tax on fees
                 holdings_dict[i_currency.upper()] += i_net_amount
             elif i_action == 'BRW': # journalling
-                pass
+                if i_quantity < 0:
+                    i_security = security_dict[i_symbol]
+                    symbol_to = journal_symbol_dest(i_symbol, i_currency) # need to define
+                    i_security.journal(symbol_to, i_transaction_date)
+                    del security_dict[i_symbol]
+                    security_dict[symbol_to] = i_security
             elif i_action == 'ADJ': # option adjustment because of splits
-                pass
+                if i_quantity < 0:
+                    # first find the new underlying symbol
+                    counter_adj = transaction_df[(transaction_df['Action'] == 'ADJ') &
+                                                 (transaction_df['Transaction Date'] == i_transaction_date) &
+                                                 (transaction_df['Quantity'] == -1 * i_quantity)]
+                    new_underlying_symbol = description_to_option(counter_adj['Desciption'], counter_adj['Currency']).underlying_symbol
+
+                    # then find the mutliplier that should be applied to the strike/share number due to the split
+                    multiplier = vlookup(split_reference, i_transaction_date, 'date', 'multiplier')
+
+                    # get the current held option and manipulate it
+                    old_symbol = description_to_option(i_description, i_currency).symbol
+                    i_option = security_dict[old_symbol]
+                    i_option.adjust_for_split(multiplier, new_underlying_symbol)
+
+                    # make the change
+                    del security_dict[old_symbol]
+                    security_dict[i_option.symbol] = i_option
 
         # fees and rebates
         elif i_activity == 'Fees and rebates':
@@ -215,13 +272,14 @@ def investorline_transaction_to_sec(transaction_df):
 
 class TransactionHistory():
     df = pd.DataFrame()
+    split_reference = None
     first_transaction_date = None
     last_transaction_date = None
     current_datetime = None
     broker = ''
 
 
-    def __init__(self, raw_df_, broker_):
+    def __init__(self, raw_df_, broker_, split_reference_=None):
         if broker_ == 'questrade':
             raw_df_['Transaction Date'] = pd.to_datetime(raw_df_['Transaction Date'], format='%Y-%m-%d %H:%M:%S %p')
             raw_df_['Settlement Date'] = pd.to_datetime(raw_df_['Settlement Date'], format='%Y-%m-%d %H:%M:%S %p')
@@ -233,6 +291,7 @@ class TransactionHistory():
             pass
         self.current_datetime = datetime.today()
         self.broker = broker_
+        self.split_reference = split_reference_
 
 
     def update_inkind_transfer(self, reference_df):
@@ -272,6 +331,28 @@ class TransactionHistory():
     def update_corporate_actions(self, reference_df):
         self.update_splits(reference_df)
         self.update_name_changes(reference_df)
+
+
+    def update_journalling(self):
+        journalling = self.df[self.df['Action'] == 'BRW']
+        print ('{} rows of journalling detected'.format(len(journalling)))
+        if len(journalling) > 0:
+            for i in journalling.index:
+                i_symbol = self.df.loc[i, 'Symbol']
+                i_currency = self.df.loc[i, 'Currency']
+                if i_symbol == 'DLR': # special treatment
+                    if i_currency == 'USD':
+                        self.df.loc[i, 'Symbol'] = 'DLR-U.TO'
+                    else:
+                        self.df.loc[i, 'Symbol'] = 'DLR.TO'
+                elif i_symbol == 'ZSP': # again, special treatment
+                    if i_currency == 'USD':
+                        self.df.loc[i, 'Symbol'] = 'ZSP-U.TO'
+                    else:
+                        self.df.loc[i, 'Symbol'] = 'ZSP.TO'
+                else:
+                    if i_currency == 'CAD':
+                        self.df.loc[i, 'Symbol'] = i_symbol + '.TO'
 
 
     def print_info(self):
@@ -419,6 +500,7 @@ class Holdings():
 
             transaction = kwargs.get('transaction')
             transaction_df = transaction.df
+            split_reference = transaction.split_reference
 
             if transaction.broker == 'questrade':
                 if kwargs.get('asof_date') is not None:
@@ -426,7 +508,7 @@ class Holdings():
                     self.asof_time = kwargs.get('asof_date')
 
                 print('constructing holdings via transaction history data...')
-                sec_dict, cash_dict_ = questrade_transaction_to_sec(transaction_df)
+                sec_dict, cash_dict_ = questrade_transaction_to_sec(transaction_df, split_reference)
                 self.symbol_list = list(sec_dict.keys())
                 self.security_list = list(sec_dict.values())
                 self.cash_dict = cash_dict_
@@ -623,13 +705,28 @@ class Security():
     def update_market_price(self, info_table, symbol_col, date=None):
         url_symbol = vlookup(info_table, self.symbol, symbol_col, 'ticker_url')
         if date is not None:
-            print('getting historical data for {} on {}'.format(self.symbol, date.strftime('%Y-%m-%d')))
+            # print('getting historical data for {} on {}'.format(self.symbol, date.strftime('%Y-%m-%d')))
             self.market_price = useful_functions.get_hist_price(self.symbol, date)
             self.market_price_time = date
         else:
             price_pair = get_last_price(url_symbol)
             self.market_price = price_pair[1]
             self.market_price_time = price_pair[0]
+
+
+    def journal(self, symbol_to, date):
+        if self.currency == 'CAD':
+            fx_dict = useful_functions.get_fx(['CADUSD'], date=date)
+            fx = fx_dict['CADUSD']
+            self.currency = 'USD'
+        else: # the only other possibility is USD by the definition of journalling
+            fx_dict = useful_functions.get_fx(['USDCAD'], date=date)
+            fx = fx_dict['USDCAD']
+            self.currency = 'CAD'
+
+        self.symbol = symbol_to
+        self.average_cost = self.average_cost * fx
+        self.commission = self.commission * fx
 
 
     def print_info(self):
@@ -656,6 +753,7 @@ class Option(Security):
     underlying_market_price_time = None # python datetime object
     expiration = None # python datetime object
     strike = 0
+    num_shares = 0
 
 
     def __init__(self, symbol_, currency_, option_type_, underlying_symbol_, expiration_, strike_):
@@ -665,6 +763,7 @@ class Option(Security):
         self.underlying_symbol = underlying_symbol_
         self.expiration = expiration_
         self.strike = strike_
+        self.num_shares = 100
 
 
     def update_security_info(self, info_table, symbol_col):
@@ -684,15 +783,21 @@ class Option(Security):
             self.underlying_market_price_time = price_pair[0]
         # the market price of the option is intrinsic value only due to difficulties of getting market value of options
         if self.option_type == 'Call':
-            self.market_price = max(0, self.underlying_market_price - self.strike) * 100
+            self.market_price = max(0, self.underlying_market_price - self.strike) * self.num_shares
         else:
-            self.market_price = max(0, self.strike - self.underlying_market_price) * 100
+            self.market_price = max(0, self.strike - self.underlying_market_price) * self.num_shares
         self.market_price_time = self.underlying_market_price_time
+
+
+    def adjust_for_split(self, numshares_multiplier, new_underlying_symbol):
+        self.symbol = '{}{}{}{:.2f}'.format(new_underlying_symbol, self.expiration.strftime('%d%b%Y'), self.option_type[0], self.strike)
+        self.strike = self.strike / numshares_multiplier
+        self.num_shares = self.num_shares * numshares_multiplier
 
 
     def print_contract_info(self):
         print('{}, {}, {}, {}, {}, {}'.format(self.symbol, self.option_type, self.currency, self.instrument, self.asset_class, self.region))
-        print('quantity: {}, avg cost: {:.2f}'.format(self.quantity, self.average_cost))
+        print('contracts: {}, {} shares of underlying each, avg cost: {:.2f} per contract'.format(self.quantity, self.num_shares, self.average_cost))
         if self.market_price_time is not None:
             print('market_price: {:.2f}, obtained at {}'.format(self.market_price, self.market_price_time.strftime('%Y-%m-%d %H:%M:%S')))
         if self.expiration is not None:

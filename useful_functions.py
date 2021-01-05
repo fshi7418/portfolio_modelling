@@ -95,7 +95,7 @@ def scrape_last_price(url, header):
      return elements
 
 
-def get_last_price_new(symbol):
+def get_last_price(symbol):
     '''
     Purpose
     -------
@@ -227,11 +227,12 @@ def get_hist_price(symbol, date):
     a floating point value representing price
 
     '''
-    # print('looking up {} on {}'.format(symbol, date.strftime('%Y-%m-%d')))
     if '.TO' in symbol:
         date = last_business_day(date, country='CAD').date()
     else:
         date = last_business_day(date, country='USD').date()
+
+    print('looking up {} on {}'.format(symbol, date.strftime('%Y-%m-%d')))
 
     range_end = date + timedelta(days=1)
 
@@ -422,6 +423,6 @@ def past_dates_dict(current_date, inception_date):
 #% test
 if __name__ == '__main__':
 
-    sym = 'DLR-U.TO'
+    sym = ['USDCAD']
 
-    print(get_last_price_new(sym))
+    print(get_fx(sym, datetime(2020, 12, 22)))

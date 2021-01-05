@@ -61,4 +61,3 @@ q_margin_transactions.update_inkind_transfer(symbol_lookup_table)
 q_margin_transactions.update_corporate_actions(symbol_lookup_table)
 q_margin_transactions.update_journalling()
 
-
