@@ -33,10 +33,15 @@ rrsp_stats = pd.read_excel(os.path.join(os.getcwd(), filename_dict['rrsp_output'
 rrsp_holdings = rrsp_stats['Current Holdings']
 rrsp_perf = rrsp_stats['Performance Asof']
 
+q_margin_stats = pd.read_excel(os.path.join(os.getcwd(), filename_dict['q_margin_output']), sheet_name=None)
+q_margin_holdings = q_margin_stats['Current Holdings']
+q_margin_perf = q_margin_stats['Performance Asof']
+
+
 #%% streamlit
 
 # sidebar
-account_list = {'Questrade TFSA': tfsa_holdings, 'Questrade RRSP': rrsp_holdings}
+account_list = {'Questrade TFSA': tfsa_holdings, 'Questrade RRSP': rrsp_holdings, 'Questrade Margin': q_margin_holdings}
 account_selected = st.sidebar.radio('Choose an account:', list(account_list.keys()))
 
 # tfsa page
@@ -66,76 +71,7 @@ charting.top5_holdings_bar(holdings_displayed, 'Pct Portfolio', 'Symbol', 'Top 5
 
 
 
-# #%% Grab all data
-# @st.cache
-# def loadSP500():
-#     sp500 = pd.read_csv("SPX.csv")
-#     return sp500
 
-
-# @st.cache
-# def grabAllStocks():
-#     files = []
-#     for file in os.listdir():
-#         if file.endswith(".csv"):
-#             files.append(file)
-
-#     tableList = []
-#     for file in files:
-#         df = pd.read_csv(file, parse_dates=['Date'], index_col=['Date'])
-#         df['Ticker'] = file.replace(".csv","")
-#         tableList.append(df) #storing as a list
-
-#     stockData = pd.concat(tableList)
-#     return stockData
-
-# #%% Grab Data
-# sp500DF = loadSP500()
-# df = grabAllStocks()
-# tickers = list(df['Ticker'].unique())
-
-# #%% Streamlit Web App
-# st.title("Stock Analyzer - Marquee Demo")
-# stockPick = st.sidebar.multiselect("Pick the stocks to graph",tickers, ["AAPL"])
-
-# #Date picks
-# # d0 = st.date_input("Start Date", min(df.index))
-# # d1 = st.date_input("End Date", max(df.index))
-# filterDF = df[df['Ticker'].isin(stockPick)]
-
-# x = min(filterDF.index.year)
-# y = max(filterDF.index.year)
-
-# y0, y1= st.sidebar.slider("Pick the year range for x-axis",x,y,(x,y))
-# filterDF = filterDF.loc[str(y0):str(y1)]
-
-# #Seaborn chart
-# # fig, ax = plt.subplots() #solved by add this line
-# # ax = sns.lineplot(data=filterDF, x=filterDF.index, y="Close", hue='Ticker')
-# # st.pyplot(fig)
-
-# #Plotly Express
-# st.write("Stocks selected: " + "; ".join(stockPick))
-# fig2 = px.line(filterDF, x=filterDF.index, y="Close", color="Ticker")
-# st.plotly_chart(fig2)
-
-# st.write(filterDF)
-
-# #%%
-# @st.cache
-# def grabGDPData():
-#     gdp = px.data.gapminder()
-#     return gdp
-
-# df = grabGDPData()
-# fig = px.bar(df,
-#               x='continent',
-#               y='gdpPercap',
-#               color='continent',
-#               animation_frame='year',
-#               animation_group='country',
-#               range_y=[0, 1000000])
-# st.plotly_chart(fig)
 
 
 
