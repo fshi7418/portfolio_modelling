@@ -39,7 +39,9 @@ def vlookup(table, item, column_from, column_to):
     '''
     item_row = table[table[column_from] == item]
     if len(item_row) == 0:
-        print('no match found')
+        message = 'no match found when looking for {0} in column {1} from column {2}'
+        message = message.format(item, column_to, column_from)
+        print(message)
         return None
 
     if len(item_row) > 1:
@@ -259,7 +261,7 @@ def split_multiplier(symbol, date):
     return multiplier
 
 
-def get_hist_price(symbol, date, split_adjust=False):
+def get_hist_price_wrapper(symbol, date, split_adjust=False):
     '''
     Purpose
     -------
@@ -282,6 +284,10 @@ def get_hist_price(symbol, date, split_adjust=False):
     a floating point value representing price
 
     '''
+    # override for DLR-U.TO due to corruption of YFinance data
+    if symbol == 'DLR-U.TO':
+        return 10.09
+
     if '.TO' in symbol:
         date = last_business_day(date, country='CAD').date()
     else:
@@ -322,6 +328,15 @@ def get_hist_price(symbol, date, split_adjust=False):
         return split_adjusted_close * unadjusted_multiplier
 
     return split_adjusted_close
+
+
+def get_hist_price(symbol, date, split_adjust=False):
+    try:
+        return get_hist_price_wrapper(symbol, date, split_adjust=split_adjust)
+    except TypeError:
+        print('looking up {} on {} failed, going back a day...'.format(symbol, date.strftime('%Y-%m-%d')))
+        date = date - timedelta(days=1)
+        return get_hist_price(symbol, date, split_adjust=split_adjust)
 
 
 def get_hist_fx(pair, date):
@@ -484,11 +499,13 @@ def past_dates_dict(current_date, inception_date):
 #% test
 if __name__ == '__main__':
 
-    sym = 'USO'
+    sym = 'CHNA-B.TO'
 
-    d = datetime(2020, 5, 30)
+    d = datetime(2020, 7, 8)
 
-    print(get_hist_price(sym, d))
+    p = get_hist_price(sym, d)
+
+    print(p)
 
     m = split_multiplier(sym, d)
 

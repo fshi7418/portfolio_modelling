@@ -212,11 +212,12 @@ def questrade_transaction_to_sec(transaction_df, split_reference=None):
                     # first find the new underlying symbol
                     counter_adj = transaction_df[(transaction_df['Action'] == 'ADJ') &
                                                  (transaction_df['Transaction Date'] == i_transaction_date) &
-                                                 (transaction_df['Quantity'] == -1 * i_quantity)]
-                    new_underlying_symbol = description_to_option(counter_adj['Desciption'], counter_adj['Currency']).underlying_symbol
+                                                 (transaction_df['Quantity'] == -1 * i_quantity)].reset_index()
+                    new_underlying_symbol = description_to_option(counter_adj.loc[0, 'Description'], counter_adj.loc[0, 'Currency']).underlying_symbol
 
                     # then find the mutliplier that should be applied to the strike/share number due to the split
-                    multiplier = vlookup(split_reference, i_transaction_date, 'date', 'multiplier')
+                    lookup_date = datetime(i_transaction_date.year, i_transaction_date.month, i_transaction_date.day)
+                    multiplier = vlookup(split_reference, lookup_date, 'date', 'multiplier')
 
                     # get the current held option and manipulate it
                     old_symbol = description_to_option(i_description, i_currency).symbol
@@ -289,7 +290,7 @@ class TransactionHistory():
         if broker_ == 'questrade':
             raw_df_['Transaction Date'] = pd.to_datetime(raw_df_['Transaction Date'], format='%Y-%m-%d %H:%M:%S %p')
             raw_df_['Settlement Date'] = pd.to_datetime(raw_df_['Settlement Date'], format='%Y-%m-%d %H:%M:%S %p')
-            raw_df_ = raw_df_.sort_values(by='Transaction Date', axis=0).reset_index(drop=True)
+            raw_df_ = raw_df_.sort_values(by=['Transaction Date', 'Settlement Date'], axis=0).reset_index(drop=True)
             self.df = raw_df_
             self.first_transaction_date = raw_df_['Transaction Date'].min()
             self.last_transaction_date = raw_df_['Transaction Date'].max()
@@ -422,6 +423,14 @@ class Portfolio():
                         lookup_symbol = cash_flows_df.loc[i, 'Symbol']
                         i_price = useful_functions.get_hist_price(lookup_symbol, cash_flows_df.loc[i, 'Transaction Date'])
                         cash_flows_df.loc[i, 'Net Amount'] = i_price * cash_flows_df.loc[i, 'Quantity']
+
+                # convert USD cash flows into CAD
+                usd_rows = cash_flows_df[cash_flows_df['Currency'] == 'USD'].index
+                if len(usd_rows) > 0:
+                    for i in usd_rows:
+                        i_usdcad = get_fx(['usdcad'], cash_flows_df.loc[i, 'Transaction Date'])['usdcad']
+                        cash_flows_df.loc[i, 'Net Amount'] = cash_flows_df.loc[i, 'Net Amount'] * i_usdcad
+                        cash_flows_df.loc[i, 'Currency'] = 'CAD'
 
                 self.inception_time = cash_flows_df['Transaction Date'].min().to_pydatetime()
                 self.external_cash_flow_df = cash_flows_df
@@ -721,7 +730,7 @@ class Security():
         url_symbol = vlookup(info_table, self.symbol, symbol_col, 'ticker_url')
         if date is not None:
             # print('getting historical data for {} on {}'.format(self.symbol, date.strftime('%Y-%m-%d')))
-            self.market_price = useful_functions.get_hist_price(self.symbol, date)
+            self.market_price = useful_functions.get_hist_price(url_symbol, date)
             self.market_price_time = date
         else:
             price_pair = get_last_price(url_symbol)

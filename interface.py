@@ -63,7 +63,10 @@ q_margin_transactions.update_inkind_transfer(symbol_lookup_table)
 q_margin_transactions.update_corporate_actions(symbol_lookup_table)
 q_margin_transactions.update_journalling()
 q_margin_transactions.update_misc_symbols(symbol_lookup_table)
-
-#%%
 q_margin_portfolio = Portfolio(transaction=q_margin_transactions, info_df=info_table)
-q_margin_portfolio.current_holdings.print_info()
+
+
+#% performance measurement
+q_margin_portfolio.get_hist_holdings(q_margin_transactions, info_table)
+q_margin_portfolio.measure_performance()
+q_margin_portfolio.output_file(q_margin_output_filename)
